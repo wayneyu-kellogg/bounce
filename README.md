@@ -9,7 +9,7 @@ Instead of hard-blocking distraction sites, Bounce redirects the user to a local
 - grant temporary access (5 minutes), or
 - deny access and push the user back to assignment work.
 
-The current MVP runs with mock assignment data by default.
+The current MVP uses a demo "Connect with Canvas" flow that fetches mock assignments from the local server.
 
 ## 2) MVP scope (what is in / out)
 
@@ -19,7 +19,7 @@ The current MVP runs with mock assignment data by default.
   - Popup app (assignment selection + editable blacklist + focus start/stop)
   - Background service worker (dynamic redirect/allow rules)
   - Bouncer page (chat interface and decision flow)
-- Mock assignment mode enabled by default (2–3 assignments due in 1–3 days)
+- Demo Canvas connect flow with server-returned mock assignments
 - Server-side Gemini proxy with API key loaded from environment variables
 - Temporary domain whitelist for exactly 5 minutes when access is granted
 
@@ -88,12 +88,13 @@ Load extension in Chrome:
 ## 7) How to use MVP flow
 
 1. Open the Bounce popup from the extension icon.
-2. Keep mock mode on (default).
-3. Select one or more assignments.
-4. Add or edit blacklist domains.
-5. Click Start Focus.
-6. Visit a blocked domain (example: youtube.com).
-7. Respond to the bouncer prompt:
+2. Click Connect with Canvas in the popup.
+3. Wait for assignments to load from the server demo payload.
+4. Select one or more assignments.
+5. Add or edit blacklist domains.
+6. Click Start Focus.
+7. Visit a blocked domain (example: youtube.com).
+8. Respond to the bouncer prompt:
    - If granted, the domain is temporarily allowed for 5 minutes.
    - If denied, the user remains blocked.
 
@@ -113,6 +114,6 @@ Load extension in Chrome:
 
 ## 10) Known limitations
 
-- Canvas integration is mocked by design in this MVP.
+- Canvas assignment data is a server-side demo JSON object in `server/index.js` (`mockCanvasAssignmentsResponse`) and can be edited for demos.
 - Current bouncer redirect restores access by domain (https://<domain>), not deep path.
 - If server is down or key is missing, bouncer cannot grant access.

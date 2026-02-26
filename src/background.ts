@@ -1,13 +1,60 @@
-import { getState, setFocusSession } from './lib/chromeStorage'
+import { getState, setFocusSession, setState } from './lib/chromeStorage'
 import { normalizeDomain, nowPlusMinutes } from './lib/domain'
 import type { ExtensionMessage, ExtensionResponse } from './lib/messages'
-import type { FocusSession } from './types'
+import type { Assignment, BouncerActionsResponse, FocusSession } from './types'
 
 const BLOCK_RULE_BASE = 10_000
 const ALLOW_RULE_BASE = 20_000
 const ALARM_PREFIX = 'temp-allow-'
+const API_BASE = 'http://localhost:8787'
 
 type AllowRecord = Record<string, number>
+
+const getNearestDueAssignment = (assignments: Assignment[]) => {
+  if (assignments.length === 0) {
+    return null
+  }
+
+  return [...assignments]
+    .filter((assignment) => Boolean(assignment.dueAtISO))
+    .sort((left, right) => new Date(left.dueAtISO).getTime() - new Date(right.dueAtISO).getTime())[0]
+}
+
+const precomputeBouncerPlan = async (selectedAssignments: Assignment[]) => {
+  const nearestDueAssignment = getNearestDueAssignment(selectedAssignments)
+
+  if (!nearestDueAssignment) {
+    await setState({ bouncerActionPlan: null })
+    return
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/api/bouncer-actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetDomain: 'blocked site',
+        assignment: nearestDueAssignment,
+      }),
+    })
+
+    const payload = (await response.json()) as BouncerActionsResponse
+    if (!response.ok || !payload.ok || !payload.actions || payload.actions.length === 0) {
+      throw new Error(payload.error ?? 'Unable to precompute bouncer actions')
+    }
+
+    await setState({
+      bouncerActionPlan: {
+        assignment: nearestDueAssignment,
+        summary: payload.summary ?? 'Choose one action and I will help you execute it.',
+        actions: payload.actions,
+        generatedAtISO: new Date().toISOString(),
+      },
+    })
+  } catch {
+    await setState({ bouncerActionPlan: null })
+  }
+}
 
 const focusToRules = (focusSession: FocusSession): chrome.declarativeNetRequest.Rule[] => {
   if (!focusSession.active) {
@@ -55,6 +102,28 @@ const setAllowRecords = async (records: AllowRecord) => {
   await chrome.storage.local.set({ temporaryAllows: records })
 }
 
+const clearAllTempAllows = async () => {
+  const existing = await chrome.declarativeNetRequest.getDynamicRules()
+  const allowRuleIds = existing
+    .filter((rule) => rule.id >= ALLOW_RULE_BASE && rule.id < ALLOW_RULE_BASE + 5000)
+    .map((rule) => rule.id)
+
+  if (allowRuleIds.length > 0) {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: allowRuleIds,
+    })
+  }
+
+  const alarms = await chrome.alarms.getAll()
+  await Promise.all(
+    alarms
+      .filter((alarm) => alarm.name.startsWith(ALARM_PREFIX))
+      .map((alarm) => chrome.alarms.clear(alarm.name)),
+  )
+
+  await setAllowRecords({})
+}
+
 const applyTempAllow = async (domain: string, minutes = 5) => {
   const cleanDomain = normalizeDomain(domain)
   const hostRuleId = ALLOW_RULE_BASE + Math.abs(hash(cleanDomain) % 5000)
@@ -99,7 +168,12 @@ const removeTempAllow = async (domain: string) => {
 
 chrome.runtime.onInstalled.addListener(async () => {
   const state = await getState()
+  await clearAllTempAllows()
   await applyFocusRules(state.focusSession)
+})
+
+chrome.runtime.onStartup.addListener(async () => {
+  await clearAllTempAllows()
 })
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -115,6 +189,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
   void (async () => {
     try {
       if (message.type === 'START_FOCUS') {
+        await clearAllTempAllows()
+
         const focusSession: FocusSession = {
           active: true,
           selectedAssignments: message.payload.selectedAssignments,
@@ -124,16 +200,21 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
         await setFocusSession(focusSession)
         await applyFocusRules(focusSession)
         sendResponse({ ok: true, focusSession } satisfies ExtensionResponse)
+
+        void precomputeBouncerPlan(message.payload.selectedAssignments)
         return
       }
 
       if (message.type === 'STOP_FOCUS') {
+        await clearAllTempAllows()
+
         const focusSession: FocusSession = {
           active: false,
           selectedAssignments: [],
           blacklistDomains: [],
         }
         await setFocusSession(focusSession)
+        await setState({ bouncerActionPlan: null })
         await applyFocusRules(focusSession)
         sendResponse({ ok: true, focusSession } satisfies ExtensionResponse)
         return

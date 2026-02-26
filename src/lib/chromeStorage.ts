@@ -1,13 +1,14 @@
-import { mockAssignments } from './mockAssignments'
 import type { BounceStorage } from '../types'
 
 const STORAGE_KEY = 'bounce_state'
 
 const defaultState: BounceStorage = {
-  mockMode: true,
-  assignments: mockAssignments,
+  mockMode: false,
+  assignments: [],
   selectedAssignmentIds: [],
   blacklistDomains: ['youtube.com', 'tiktok.com', 'instagram.com'],
+  canvasDemoConnected: false,
+  bouncerActionPlan: null,
   focusSession: {
     active: false,
     selectedAssignments: [],

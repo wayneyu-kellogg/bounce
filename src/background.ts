@@ -9,6 +9,30 @@ const ALARM_PREFIX = 'temp-allow-'
 const API_BASE = 'http://localhost:8787'
 
 type AllowRecord = Record<string, number>
+type SanitizerRecord = Record<string, number>
+
+const getSanitizerRecords = async (): Promise<SanitizerRecord> => {
+  const result = await chrome.storage.local.get('temporarySanitizers')
+  return (result.temporarySanitizers ?? {}) as SanitizerRecord
+}
+
+const setSanitizerRecords = async (records: SanitizerRecord) => {
+  await chrome.storage.local.set({ temporarySanitizers: records })
+}
+
+const isYouTubeDomain = (domain: string) => domain === 'youtube.com' || domain.endsWith('.youtube.com')
+
+const hasActiveYouTubeSanitizer = async (domain: string) => {
+  const normalized = normalizeDomain(domain)
+  const records = await getSanitizerRecords()
+  const expiresAt = records.youtube
+
+  if (!expiresAt || expiresAt <= Date.now()) {
+    return false
+  }
+
+  return isYouTubeDomain(normalized)
+}
 
 const getNearestDueAssignment = (assignments: Assignment[]) => {
   if (assignments.length === 0) {
@@ -122,6 +146,7 @@ const clearAllTempAllows = async () => {
   )
 
   await setAllowRecords({})
+  await setSanitizerRecords({})
 }
 
 const applyTempAllow = async (domain: string, minutes = 5) => {
@@ -148,6 +173,12 @@ const applyTempAllow = async (domain: string, minutes = 5) => {
   records[cleanDomain] = expiresAt
   await setAllowRecords(records)
 
+  if (isYouTubeDomain(cleanDomain)) {
+    const sanitizerRecords = await getSanitizerRecords()
+    sanitizerRecords.youtube = expiresAt
+    await setSanitizerRecords(sanitizerRecords)
+  }
+
   await chrome.alarms.create(`${ALARM_PREFIX}${cleanDomain}`, {
     when: expiresAt,
   })
@@ -164,6 +195,12 @@ const removeTempAllow = async (domain: string) => {
   const records = await getAllowRecords()
   delete records[cleanDomain]
   await setAllowRecords(records)
+
+  if (isYouTubeDomain(cleanDomain)) {
+    const sanitizerRecords = await getSanitizerRecords()
+    delete sanitizerRecords.youtube
+    await setSanitizerRecords(sanitizerRecords)
+  }
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -229,6 +266,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
       if (message.type === 'REQUEST_TEMP_ACCESS') {
         await applyTempAllow(message.payload.domain, message.payload.minutes ?? 5)
         sendResponse({ ok: true } satisfies ExtensionResponse)
+        return
+      }
+
+      if (message.type === 'GET_SANITIZER_STATE') {
+        const sanitizeEnabled = await hasActiveYouTubeSanitizer(message.payload.domain)
+        sendResponse({ ok: true, sanitizeEnabled } satisfies ExtensionResponse)
         return
       }
 

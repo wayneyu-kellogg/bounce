@@ -16,6 +16,13 @@ export default defineManifest({
   },
   permissions: ['storage', 'declarativeNetRequest', 'alarms', 'tabs'],
   host_permissions: ['<all_urls>', 'http://localhost:8787/*'],
+  content_scripts: [
+    {
+      matches: ['*://*.youtube.com/*'],
+      js: ['src/content/youtubeSanitizer.ts'],
+      run_at: 'document_end',
+    },
+  ],
   web_accessible_resources: [
     {
       resources: ['bouncer.html'],

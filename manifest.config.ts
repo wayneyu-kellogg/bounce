@@ -2,11 +2,11 @@ import { defineManifest } from '@crxjs/vite-plugin'
 
 export default defineManifest({
   manifest_version: 3,
-  name: 'Bounce',
+  name: 'Focus Agent',
   version: '0.1.0',
-  description: 'MVP productivity bouncer for focus sessions.',
+  description: 'Get Back on Track with focused browsing guardrails.',
   action: {
-    default_title: 'Bounce',
+    default_title: 'Focus Agent',
     default_popup: 'popup.html',
   },
   options_page: 'bouncer.html',

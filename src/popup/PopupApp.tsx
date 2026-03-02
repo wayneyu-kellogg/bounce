@@ -1,14 +1,33 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import brandLogo from '../assets/logo.png'
 import { getState, setState } from '../lib/chromeStorage'
 import { fetchDemoCanvasAssignments } from '../lib/canvas'
 import { formatDueDate, normalizeDomain } from '../lib/domain'
 import type { ExtensionMessage, ExtensionResponse } from '../lib/messages'
-import type { Assignment } from '../types'
+import type { AgentPersona, AgentPersonaPresetId, Assignment } from '../types'
 
 const sendMessage = <T extends ExtensionResponse>(message: ExtensionMessage) =>
   chrome.runtime.sendMessage<ExtensionMessage, T>(message)
 
 const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+const personaPresets: Array<{ id: AgentPersonaPresetId; label: string; description: string }> = [
+  {
+    id: 'strict',
+    label: 'Strict Coach',
+    description: 'Direct accountability and sharp pushback.',
+  },
+  {
+    id: 'supportive',
+    label: 'Supportive Mentor',
+    description: 'Empathetic tone with practical encouragement.',
+  },
+  {
+    id: 'socratic',
+    label: 'Socratic Strategist',
+    description: 'Guides with strategic questions and reflection.',
+  },
+]
 
 export function PopupApp() {
   const [loading, setLoading] = useState(true)
@@ -17,6 +36,7 @@ export function PopupApp() {
   const [canvasLoading, setCanvasLoading] = useState(false)
   const [canvasError, setCanvasError] = useState('')
   const [canvasConnected, setCanvasConnected] = useState(false)
+  const [agentPersona, setAgentPersona] = useState<AgentPersona>({ mode: 'preset', presetId: 'strict' })
   const [blacklistDomains, setBlacklistDomains] = useState<string[]>([])
   const [newDomain, setNewDomain] = useState('')
   const [focusActive, setFocusActive] = useState(false)
@@ -32,11 +52,43 @@ export function PopupApp() {
       setCanvasConnected(state.canvasDemoConnected)
       setAssignments(state.canvasDemoConnected ? state.assignments : [])
       setSelectedAssignmentIds(state.canvasDemoConnected ? state.selectedAssignmentIds : [])
+      setAgentPersona(state.agentPersona)
       setBlacklistDomains(state.blacklistDomains)
       setFocusActive(state.focusSession.active)
       setLoading(false)
     })()
   }, [])
+
+  const setPresetPersona = async (presetId: AgentPersonaPresetId) => {
+    const nextPersona: AgentPersona = {
+      mode: 'preset',
+      presetId,
+    }
+    setAgentPersona(nextPersona)
+    await setState({ agentPersona: nextPersona })
+  }
+
+  const setCustomPersonaMode = async () => {
+    if (agentPersona.mode === 'custom') {
+      return
+    }
+
+    const nextPersona: AgentPersona = {
+      mode: 'custom',
+      customPrompt: '',
+    }
+    setAgentPersona(nextPersona)
+    await setState({ agentPersona: nextPersona })
+  }
+
+  const updateCustomPersonaPrompt = async (customPrompt: string) => {
+    const nextPersona: AgentPersona = {
+      mode: 'custom',
+      customPrompt,
+    }
+    setAgentPersona(nextPersona)
+    await setState({ agentPersona: nextPersona })
+  }
 
   const connectCanvasDemo = async () => {
     try {
@@ -125,7 +177,7 @@ export function PopupApp() {
   }
 
   if (loading) {
-    return <Shell>Loading Bounce…</Shell>
+    return <Shell>Loading Focus Agent…</Shell>
   }
 
   return (
@@ -133,8 +185,7 @@ export function PopupApp() {
       <div className="space-y-4">
         <header className="flex items-center justify-between">
           <div>
-            <p className="text-xs uppercase tracking-wide text-slate-500">Bounce</p>
-            <h1 className="text-lg font-semibold text-slate-900">Focus Control</h1>
+            <img src={brandLogo} alt="Focus Agent" className="h-16 w-auto max-w-[280px] object-contain" />
           </div>
           <span
             className={`rounded-full px-2.5 py-1 text-xs font-medium ${
@@ -202,6 +253,50 @@ export function PopupApp() {
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <p className="text-sm font-medium text-slate-800">Focus Agent Persona</p>
+          <p className="mt-1 text-xs text-slate-500">Choose how Focus Agent speaks during coaching and decisions.</p>
+          <div className="mt-2 space-y-2">
+            {personaPresets.map((personaPreset) => {
+              const selected = agentPersona.mode === 'preset' && agentPersona.presetId === personaPreset.id
+              return (
+                <button
+                  key={personaPreset.id}
+                  type="button"
+                  onClick={() => void setPresetPersona(personaPreset.id)}
+                  className={`w-full rounded-lg border px-3 py-2 text-left ${
+                    selected ? 'border-rose-300 bg-rose-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <p className="text-sm font-medium text-slate-800">{personaPreset.label}</p>
+                  <p className="mt-0.5 text-xs text-slate-600">{personaPreset.description}</p>
+                </button>
+              )
+            })}
+
+            <button
+              type="button"
+              onClick={() => void setCustomPersonaMode()}
+              className={`w-full rounded-lg border px-3 py-2 text-left ${
+                agentPersona.mode === 'custom' ? 'border-rose-300 bg-rose-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+              }`}
+            >
+              <p className="text-sm font-medium text-slate-800">Custom Persona</p>
+              <p className="mt-0.5 text-xs text-slate-600">Write your own tone and behavior instructions.</p>
+            </button>
+
+            {agentPersona.mode === 'custom' ? (
+              <textarea
+                value={agentPersona.customPrompt}
+                onChange={(event) => void updateCustomPersonaPrompt(event.target.value.slice(0, 400))}
+                placeholder="Example: Be concise, warm, and accountability-focused. Ask one follow-up question before granting access."
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 outline-none focus:border-slate-400"
+                rows={4}
+              />
+            ) : null}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
           <p className="text-sm font-medium text-slate-800">Blocked Sites</p>
           <div className="mt-2 flex gap-2">
             <input
@@ -213,7 +308,7 @@ export function PopupApp() {
             <button
               type="button"
               onClick={() => void addDomain()}
-              className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white"
+              className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
             >
               Add
             </button>

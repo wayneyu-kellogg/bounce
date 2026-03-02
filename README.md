@@ -1,10 +1,12 @@
-# Bounce (MVP)
+# Focus Agent (MVP)
 
-Bounce is a Chrome Extension that adds AI-powered friction when users try to visit distracting sites during a focus block.
+Focus Agent is a Chrome Extension that adds AI-powered friction when users try to visit distracting sites during a focus block.
+
+Tagline: Get Back on Track.
 
 ## 1) High-level overview
 
-Instead of hard-blocking distraction sites, Bounce redirects the user to a local bouncer page and asks them to justify access. The bouncer uses assignment context and an LLM decision to either:
+Instead of hard-blocking distraction sites, Focus Agent redirects the user to a local bouncer page and asks them to justify access. The bouncer uses assignment context and an LLM decision to either:
 
 - grant temporary access (5 minutes), or
 - deny access and push the user back to assignment work.
@@ -20,6 +22,7 @@ The current MVP uses a demo "Connect with Canvas" flow that fetches mock assignm
   - Background service worker (dynamic redirect/allow rules)
   - Bouncer page (chat interface and decision flow)
 - Demo Canvas connect flow with server-returned mock assignments
+- Persona selector with 3 presets plus custom persona prompt
 - Server-side Gemini proxy with API key loaded from environment variables
 - Temporary domain whitelist for exactly 5 minutes when access is granted
 
@@ -87,14 +90,15 @@ Load extension in Chrome:
 
 ## 7) How to use MVP flow
 
-1. Open the Bounce popup from the extension icon.
+1. Open the Focus Agent popup from the extension icon.
 2. Click Connect with Canvas in the popup.
 3. Wait for assignments to load from the server demo payload.
 4. Select one or more assignments.
-5. Add or edit blacklist domains.
-6. Click Start Focus.
-7. Visit a blocked domain (example: youtube.com).
-8. Respond to the bouncer prompt:
+5. Choose a Focus Agent persona (Strict, Supportive, Socratic, or Custom).
+6. Add or edit blacklist domains.
+7. Click Start Focus.
+8. Visit a blocked domain (example: youtube.com).
+9. Respond to the bouncer prompt:
    - If granted, the domain is temporarily allowed for 5 minutes.
    - If denied, the user remains blocked.
 
@@ -107,7 +111,8 @@ Load extension in Chrome:
 
 ## 9) Team collaboration notes
 
-- Codename is currently Bounce; naming may change.
+- Product name: Focus Agent.
+- Tagline: Get Back on Track.
 - Keep API keys only in server/.env (never commit secrets).
 - Commit only source files (dist can be regenerated).
 - Keep UI minimal, clean, and scoped to MVP.

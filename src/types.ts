@@ -13,10 +13,24 @@ export type FocusSession = {
   startedAtISO?: string
 }
 
+export type AgentPersonaPresetId = 'strict' | 'supportive' | 'socratic'
+
+export type AgentPersona =
+  | {
+      mode: 'preset'
+      presetId: AgentPersonaPresetId
+    }
+  | {
+      mode: 'custom'
+      customPrompt: string
+    }
+
 export type BouncerDecision = {
   grant_access: boolean
   reason?: string
   response?: string
+  researchQuery?: string
+  recommendedVideoUrl?: string
 }
 
 export type BouncerActionItem = {
@@ -47,6 +61,7 @@ export type BounceStorage = {
   selectedAssignmentIds: string[]
   blacklistDomains: string[]
   canvasDemoConnected: boolean
+  agentPersona: AgentPersona
   bouncerActionPlan: BouncerActionPlan | null
   focusSession: FocusSession
 }

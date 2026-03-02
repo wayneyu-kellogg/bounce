@@ -45,6 +45,7 @@ const getNearestDueAssignment = (assignments: Assignment[]) => {
 }
 
 const precomputeBouncerPlan = async (selectedAssignments: Assignment[]) => {
+  const state = await getState()
   const nearestDueAssignment = getNearestDueAssignment(selectedAssignments)
 
   if (!nearestDueAssignment) {
@@ -59,6 +60,7 @@ const precomputeBouncerPlan = async (selectedAssignments: Assignment[]) => {
       body: JSON.stringify({
         targetDomain: 'blocked site',
         assignment: nearestDueAssignment,
+        persona: state.agentPersona,
       }),
     })
 

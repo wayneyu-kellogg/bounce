@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import brandLogo from '../assets/logo.png'
 import { getState, setState } from '../lib/chromeStorage'
-import type { Assignment, BouncerActionItem, BouncerActionsResponse, BouncerDecision } from '../types'
+import type { AgentPersona, Assignment, BouncerActionItem, BouncerActionsResponse, BouncerDecision } from '../types'
 
 type ChatMessage = {
   role: 'assistant' | 'user'
@@ -8,6 +9,45 @@ type ChatMessage = {
 }
 
 const API_BASE = 'http://localhost:8787'
+const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+const isYouTubeDomain = (domain: string) => {
+  const normalized = domain.toLowerCase()
+  return normalized === 'youtube.com' || normalized.endsWith('.youtube.com')
+}
+
+const isYouTubeUrl = (value: string) => {
+  try {
+    const url = new URL(value)
+    const host = url.hostname.toLowerCase()
+    return host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be'
+  } catch {
+    return false
+  }
+}
+
+const buildYouTubeResearchUrl = (decision: BouncerDecision, fallbackQuery: string) => {
+  if (decision.recommendedVideoUrl && isYouTubeUrl(decision.recommendedVideoUrl)) {
+    return decision.recommendedVideoUrl
+  }
+
+  const query = decision.researchQuery?.trim() || fallbackQuery.trim()
+  const encodedQuery = encodeURIComponent(query || 'assignment research')
+  return `https://www.youtube.com/results?search_query=${encodedQuery}`
+}
+
+const getRedirectNotice = (targetDomain: string, decision: BouncerDecision, fallbackQuery: string) => {
+  if (!isYouTubeDomain(targetDomain)) {
+    return `Access approved. Opening ${targetDomain} for focused work.`
+  }
+
+  if (decision.recommendedVideoUrl && isYouTubeUrl(decision.recommendedVideoUrl)) {
+    return 'Access approved. Opening the recommended research video now.'
+  }
+
+  const query = decision.researchQuery?.trim() || fallbackQuery.trim() || 'assignment research'
+  return `Access approved. Opening YouTube research results for: "${query}".`
+}
 
 const getNearestDueAssignment = (assignments: Assignment[]) => {
   if (assignments.length === 0) {
@@ -30,6 +70,23 @@ export function BouncerApp() {
   const [actionStatus, setActionStatus] = useState('')
   const [activeAssignment, setActiveAssignment] = useState<Assignment | null>(null)
   const [error, setError] = useState('')
+  const [activePersonaLabel, setActivePersonaLabel] = useState('Strict Coach')
+
+const getPersonaLabel = (persona: AgentPersona) => {
+  if (persona.mode === 'custom') {
+    return 'Custom Persona'
+  }
+
+  if (persona.presetId === 'supportive') {
+    return 'Supportive Mentor'
+  }
+
+  if (persona.presetId === 'socratic') {
+    return 'Socratic Strategist'
+  }
+
+  return 'Strict Coach'
+}
 
   const targetDomain = useMemo(() => {
     const params = new URLSearchParams(window.location.search)
@@ -41,6 +98,7 @@ export function BouncerApp() {
       setActionsLoading(true)
       setError('')
       const state = await getState()
+      setActivePersonaLabel(getPersonaLabel(state.agentPersona))
       const nearestDueAssignment = getNearestDueAssignment(state.focusSession.selectedAssignments)
 
       if (!nearestDueAssignment) {
@@ -66,6 +124,7 @@ export function BouncerApp() {
         body: JSON.stringify({
           targetDomain,
           assignment: nearestDueAssignment,
+          persona: state.agentPersona,
         }),
       })
 
@@ -113,12 +172,15 @@ export function BouncerApp() {
       }
       setActionStatus(`Opened ${action.title} in a new tab. Continue here for coaching.`)
 
+      const state = await getState()
+
       const response = await fetch(`${API_BASE}/api/bouncer-action-guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           assignment: activeAssignment,
           action,
+          persona: state.agentPersona,
         }),
       })
 
@@ -161,6 +223,7 @@ export function BouncerApp() {
 
     try {
       const state = await getState()
+      setActivePersonaLabel(getPersonaLabel(state.agentPersona))
       const primaryAssignment = state.focusSession.selectedAssignments[0]
 
       const response = await fetch(`${API_BASE}/api/bouncer-decision`, {
@@ -171,11 +234,12 @@ export function BouncerApp() {
           userMessage: text,
           assignment: primaryAssignment,
           assignments: state.focusSession.selectedAssignments,
+          persona: state.agentPersona,
         }),
       })
 
       if (!response.ok) {
-        let details = 'Bouncer server is unavailable'
+        let details = 'Focus Agent server is unavailable'
         try {
           const errorPayload = (await response.json()) as { response?: string }
           if (errorPayload.response) {
@@ -195,7 +259,19 @@ export function BouncerApp() {
           payload: { domain: targetDomain, minutes: 5 },
         })
 
-        const targetUrl = `https://${targetDomain}`
+        const fallbackQuery = `${primaryAssignment?.title ?? ''} ${primaryAssignment?.course ?? ''} ${text}`.trim()
+        const targetUrl = isYouTubeDomain(targetDomain)
+          ? buildYouTubeResearchUrl(decision, fallbackQuery)
+          : `https://${targetDomain}`
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            text: getRedirectNotice(targetDomain, decision, fallbackQuery),
+          },
+        ])
+        await wait(900)
         window.location.href = targetUrl
         return
       }
@@ -220,10 +296,15 @@ export function BouncerApp() {
   return (
     <main className="mx-auto min-h-screen w-full max-w-2xl p-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-xs uppercase tracking-wide text-slate-500">Bounce</p>
+        <div>
+          <img src={brandLogo} alt="Focus Agent" className="h-16 w-auto max-w-[320px] object-contain" />
+        </div>
         <h1 className="mt-1 text-2xl font-semibold text-slate-900">Why are you opening {targetDomain}?</h1>
         <p className="mt-2 text-sm text-slate-600">
           You are in a focus session. If this is directly required for your assignment, explain clearly.
+        </p>
+        <p className="mt-2 inline-flex items-center rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-medium text-rose-700">
+          Persona: {activePersonaLabel}
         </p>
 
         <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -284,7 +365,7 @@ export function BouncerApp() {
 
         <section className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
           <div className="flex items-center gap-2">
-            <p className="text-sm font-medium text-slate-800">Chat with Bounce coach</p>
+            <p className="text-sm font-medium text-slate-800">Chat with Focus Agent</p>
             <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">Custom path</span>
           </div>
           <p className="mt-1 text-xs text-slate-600">Use chat when you need custom help or want to explain your intent.</p>

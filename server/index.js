@@ -80,11 +80,59 @@ const parseGeminiJson = (data, fallback) => {
   }
 }
 
+const personaPresetInstructions = {
+  strict:
+    'Persona mode: Strict Coach. Tone is strict and direct. Prioritize accountability, brevity, and clear boundaries.',
+  supportive:
+    'Persona mode: Supportive Mentor. Tone is supportive and empathetic. Encourage progress while still holding the user accountable.',
+  socratic:
+    'Persona mode: Socratic Strategist. Tone is strategic and reflective. Use concise probing questions to guide better decisions.',
+}
+
+const normalizePersona = (persona) => {
+  if (persona?.mode === 'custom') {
+    const customPrompt = String(persona.customPrompt ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 400)
+
+    if (customPrompt.length > 0) {
+      return {
+        mode: 'custom',
+        customPrompt,
+      }
+    }
+  }
+
+  const presetId = persona?.mode === 'preset' ? persona.presetId : undefined
+  if (presetId === 'supportive' || presetId === 'socratic' || presetId === 'strict') {
+    return {
+      mode: 'preset',
+      presetId,
+    }
+  }
+
+  return {
+    mode: 'preset',
+    presetId: 'strict',
+  }
+}
+
+const buildPersonaInstruction = (persona) => {
+  const normalizedPersona = normalizePersona(persona)
+
+  if (normalizedPersona.mode === 'custom') {
+    return `Use this custom persona instruction while preserving focus guardrails: ${normalizedPersona.customPrompt}`
+  }
+
+  return personaPresetInstructions[normalizedPersona.presetId]
+}
+
 app.use(cors())
 app.use(express.json())
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'bounce-server' })
+  res.json({ ok: true, service: 'focus-agent-server' })
 })
 
 app.get('/api/canvas/demo-assignments', (_req, res) => {
@@ -105,18 +153,24 @@ app.post('/api/bouncer-decision', async (req, res) => {
     return
   }
 
-  const { targetDomain, userMessage, assignment, assignments } = req.body ?? {}
+  const { targetDomain, userMessage, assignment, assignments, persona } = req.body ?? {}
 
   const assignmentTitle = assignment?.title ?? 'an assignment'
   const assignmentDue = assignment?.dueAtISO ?? 'soon'
+  const normalizedTarget = String(targetDomain ?? '').toLowerCase()
+  const isYouTubeTarget = normalizedTarget === 'youtube.com' || normalizedTarget.endsWith('.youtube.com')
 
   const systemPrompt = [
-    'You are a strict, pragmatic productivity bouncer.',
+    'You are Focus Agent, a productivity coach and attention firewall.',
     `The user has an impending deadline for ${assignmentTitle} due at ${assignmentDue}.`,
     `They are trying to access ${targetDomain}.`,
     'Your goal is to prevent procrastination.',
+    buildPersonaInstruction(persona),
     'If their excuse is educational and directly required for the assignment, output exactly JSON: {"grant_access": true, "reason": "educational"}.',
     'If it is weak, output exactly JSON: {"grant_access": false, "response": "<snarky motivational pushback>"}.',
+    isYouTubeTarget
+      ? 'When grant_access is true for YouTube, also include "researchQuery" (concise keyword phrase) and optionally "recommendedVideoUrl" if you can infer a likely direct YouTube watch URL. Keep valid JSON only.'
+      : 'For non-YouTube targets, do not include YouTube-specific fields.',
     'Never output markdown, only valid JSON.',
   ].join(' ')
 
@@ -176,19 +230,21 @@ app.post('/api/bouncer-decision', async (req, res) => {
       grant_access: Boolean(parsed.grant_access),
       reason: parsed.reason,
       response: parsed.response,
+      researchQuery: typeof parsed.researchQuery === 'string' ? parsed.researchQuery : undefined,
+      recommendedVideoUrl: typeof parsed.recommendedVideoUrl === 'string' ? parsed.recommendedVideoUrl : undefined,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown server error'
     res.status(500).json({
       grant_access: false,
-      response: `Bounce server error: ${message}`,
+      response: `Focus Agent server error: ${message}`,
     })
   }
 })
 
 app.post('/api/bouncer-actions', async (req, res) => {
   const geminiApiKey = process.env.GEMINI_API_KEY
-  const { targetDomain, assignment } = req.body ?? {}
+  const { targetDomain, assignment, persona } = req.body ?? {}
 
   if (!assignment) {
     res.status(400).json({
@@ -208,9 +264,10 @@ app.post('/api/bouncer-actions', async (req, res) => {
   }
 
   const systemPrompt = [
-    'You are a practical study coach inside a productivity blocker app.',
+    'You are Focus Agent inside a productivity blocker app.',
     'Given assignment context and a distraction target, suggest exactly 3 next actions that move the assignment forward.',
     'Action options must include one reading resource, one case/research PDF path, and one write-up action.',
+    buildPersonaInstruction(persona),
     'Respond with strict JSON only in this shape:',
     '{"summary":"...","actions":[{"id":"...","title":"...","description":"...","actionType":"open_link|create_google_doc","url":"https://..."}]}.',
     'Keep titles under 6 words and descriptions under 120 chars.',
@@ -290,7 +347,7 @@ app.post('/api/bouncer-actions', async (req, res) => {
 
 app.post('/api/bouncer-action-guide', async (req, res) => {
   const geminiApiKey = process.env.GEMINI_API_KEY
-  const { assignment, action } = req.body ?? {}
+  const { assignment, action, persona } = req.body ?? {}
 
   if (!assignment || !action) {
     res.status(400).json({ ok: false, error: 'Missing assignment or action payload' })
@@ -306,8 +363,9 @@ app.post('/api/bouncer-action-guide', async (req, res) => {
   }
 
   const systemPrompt = [
-    'You are a concise academic productivity coach.',
+    'You are Focus Agent, an academic productivity coach.',
     'The user selected an action item. Give a short, practical execution plan in 2-4 sentences.',
+    buildPersonaInstruction(persona),
     'Tone: encouraging and direct. Mention one immediate first step and one completion checkpoint.',
     'Output strict JSON only: {"response":"..."}',
   ].join(' ')
@@ -363,5 +421,5 @@ app.post('/api/bouncer-action-guide', async (req, res) => {
 })
 
 app.listen(port, () => {
-  console.log(`Bounce server running on http://localhost:${port}`)
+  console.log(`Focus Agent server running on http://localhost:${port}`)
 })

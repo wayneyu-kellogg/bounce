@@ -1,124 +1,151 @@
-# Focus Agent (MVP)
+# Focus Agent
 
-Focus Agent is a Chrome Extension that adds AI-powered friction when users try to visit distracting sites during a focus block.
+Get Back on Track.
 
-Tagline: Get Back on Track.
+Focus Agent is a Chrome extension that applies AI-guided friction when users try to access distracting domains during a focus session. The current implementation uses a hybrid decision flow with policy scoring, retrieval context, LLM reasoning, and verifier guardrails.
 
-## 1) High-level overview
+## What the product does
 
-Instead of hard-blocking distraction sites, Focus Agent redirects the user to a local bouncer page and asks them to justify access. The bouncer uses assignment context and an LLM decision to either:
+- Focus session setup with assignment selection and editable domain blocklist
+- Canvas demo connection (mock server payload)
+- Persona-aware coaching (Strict, Supportive, Socratic, Custom)
+- Bouncer interception with:
+  - quick action plan generation
+  - chat-based access justification
+  - decision trace metadata (confidence, reason code, policy decision)
+- YouTube research mode during approved access:
+  - targeted redirect to recommended video or focused search
+  - feed sanitization and Research Mode banner
 
-- grant temporary access (5 minutes), or
-- deny access and push the user back to assignment work.
+## AI architecture (current)
 
-The current MVP uses a demo "Connect with Canvas" flow that fetches mock assignments from the local server.
+For bouncer decisions, the server can run a feature-flagged orchestrator pipeline:
 
-## 2) MVP scope (what is in / out)
+1. Signal extraction (deadline urgency, domain risk, rationale specificity, history)
+2. Policy scoring (allow/deny/review prior + confidence)
+3. Retrieval context lookup from mock academic resources
+4. LLM decision generation (structured JSON)
+5. Response verifier pass (schema normalization + guardrails)
 
-### In scope
+When orchestrator is disabled, the system falls back to the legacy LLM-only decision endpoint behavior.
 
-- Chrome Extension (Manifest V3) with:
-  - Popup app (assignment selection + editable blacklist + focus start/stop)
-  - Background service worker (dynamic redirect/allow rules)
-  - Bouncer page (chat interface and decision flow)
-- Demo Canvas connect flow with server-returned mock assignments
-- Persona selector with 3 presets plus custom persona prompt
-- Server-side Gemini proxy with API key loaded from environment variables
-- Temporary domain whitelist for exactly 5 minutes when access is granted
+## Project structure
 
-### Out of scope (for now)
+- src/popup/*: session controls, assignments, persona, blocklist
+- src/bouncer/*: decision UI, action execution, decision trace, feedback capture
+- src/background.ts: blocking rules, temporary allow lifecycle, sanitizer state
+- src/content/youtubeSanitizer.ts: YouTube research mode filtering
+- src/lib/*: shared storage/message helpers
+- server/index.js: API routes and feature-flag wiring
+- server/mockData.js: mock datasets, retrieval helper, telemetry store
+- server/signalExtraction.js: intervention feature engineering
+- server/policyScoring.js: policy prior scoring and thresholds
+- server/orchestrator.js: policy + retrieval + LLM + verifier pipeline
+- server/responseVerifier.js: final schema/policy safety normalization
+- server/offlineEval.js: replay eval and threshold tuning
 
-- Production-grade Canvas OAuth flow and live Canvas sync
-- Multi-user auth and backend persistence
-- Analytics dashboards and historical reporting
-- Advanced prompt experimentation UI
-
-## 3) Tech stack
-
-- Extension app: React + TypeScript + Vite + Tailwind CSS
-- Extension packaging: @crxjs/vite-plugin (MV3)
-- State: chrome.storage.local + message passing
-- AI proxy server: Node.js + Express
-- Model target: gemini-2.5-flash (called from server)
-
-## 4) Repository structure
-
-- src/background.ts: background service worker, dynamic block/allow rules, alarm-based expiry
-- src/popup/*: popup UI and focus-session controls
-- src/bouncer/*: interception chat UI and grant/deny handling
-- src/lib/*: shared storage, messaging, mock assignment helpers
-- manifest.config.ts: extension manifest definition
-- server/index.js: Gemini proxy endpoint
-- server/.env.example: environment template
-
-## 5) Installation
-
-### Prerequisites
+## Prerequisites
 
 - Node.js 20+
 - npm 10+
 - Google Chrome
 
-### Setup
+## Setup
 
 1. Install dependencies:
 
    npm install
 
-2. Create server environment file:
+2. Create env file:
 
    cp server/.env.example server/.env
 
-3. Set GEMINI_API_KEY in server/.env.
+3. Configure server env values:
 
-## 6) Running locally
+   GEMINI_API_KEY=your_key_here
+   PORT=8787
+   ENABLE_AI_ORCHESTRATOR=false
+   ENABLE_RESPONSE_VERIFIER=true
+   ENABLE_DECISION_TRACE_METADATA=true
+   ENABLE_TELEMETRY_CAPTURE=false
+   ENABLE_OFFLINE_EVAL=false
 
-Run server (terminal 1):
+## Run locally
 
-npm run dev:server
+1. Start server:
 
-Build extension (terminal 2):
+   npm run dev:server
 
-npm run build
+2. Build extension:
 
-Load extension in Chrome:
+   npm run build
 
-1. Open chrome://extensions
-2. Enable Developer mode
-3. Click Load unpacked
-4. Select the dist folder
+3. Load extension in Chrome:
+   - Open chrome://extensions
+   - Enable Developer mode
+   - Click Load unpacked
+   - Select dist/
 
-## 7) How to use MVP flow
+4. After code changes:
+   - npm run build
+   - click Reload in chrome://extensions
 
-1. Open the Focus Agent popup from the extension icon.
-2. Click Connect with Canvas in the popup.
-3. Wait for assignments to load from the server demo payload.
-4. Select one or more assignments.
-5. Choose a Focus Agent persona (Strict, Supportive, Socratic, or Custom).
-6. Add or edit blacklist domains.
-7. Click Start Focus.
-8. Visit a blocked domain (example: youtube.com).
-9. Respond to the bouncer prompt:
-   - If granted, the domain is temporarily allowed for 5 minutes.
-   - If denied, the user remains blocked.
+## End-to-end walkthrough
 
-## 8) Dev scripts
+1. Open popup and click Connect with Canvas.
+2. Select assignments, persona, and blocked domains.
+3. Start focus.
+4. Open a blocked site.
+5. On bouncer:
+   - choose a quick action, or
+   - explain rationale in chat
+6. Review decision trace metadata (if enabled).
+7. If granted, temporary access opens (YouTube gets research routing + sanitization).
+8. Submit helpful/not helpful feedback in decision trace panel.
 
-- npm run dev: extension dev mode
-- npm run dev:server: Express server with watch mode
-- npm run build: TypeScript + Vite build
-- npm run lint: ESLint checks
+## Feature flags
 
-## 9) Team collaboration notes
+- ENABLE_AI_ORCHESTRATOR
+  - false: legacy LLM-only decision path
+  - true: policy + retrieval + LLM + verifier orchestration path
+- ENABLE_RESPONSE_VERIFIER
+  - true: enforce final response normalization and policy guardrail checks
+- ENABLE_DECISION_TRACE_METADATA
+  - true: include confidence/reason/policy metadata in decision payload
+- ENABLE_TELEMETRY_CAPTURE
+  - true: persist intervention/outcome logs in mock telemetry store
+- ENABLE_OFFLINE_EVAL
+  - true: enable policy replay/tuning endpoints
 
-- Product name: Focus Agent.
-- Tagline: Get Back on Track.
-- Keep API keys only in server/.env (never commit secrets).
-- Commit only source files (dist can be regenerated).
-- Keep UI minimal, clean, and scoped to MVP.
+## Mock APIs (development)
 
-## 10) Known limitations
+- GET /api/mock/bootstrap
+- GET /api/mock/courses
+- GET /api/mock/assignments
+- GET /api/mock/resources
+- GET /api/mock/domains
+- GET /api/mock/profile
+- GET /api/mock/history
+- GET /api/mock/metrics-summary
+- POST /api/mock/retrieve-context
+- POST /api/mock/extract-signals
+- POST /api/mock/policy-score
+- POST /api/mock/orchestrate-decision
+- GET/POST /api/mock/evaluate-policy (when ENABLE_OFFLINE_EVAL=true)
+- POST /api/mock/log-intervention (active when ENABLE_TELEMETRY_CAPTURE=true)
+- POST /api/mock/log-outcome (active when ENABLE_TELEMETRY_CAPTURE=true)
+- GET /api/feature-flags
 
-- Canvas assignment data is a server-side demo JSON object in `server/index.js` (`mockCanvasAssignmentsResponse`) and can be edited for demos.
-- Current bouncer redirect restores access by domain (https://<domain>), not deep path.
-- If server is down or key is missing, bouncer cannot grant access.
+## Scripts
+
+- npm run dev
+- npm run dev:server
+- npm run build
+- npm run lint
+- npm run preview
+
+## Known limitations
+
+- Canvas integration is still demo-only.
+- Telemetry and offline eval are in-memory mock flows (non-persistent).
+- Threshold tuning uses small mock samples and should not be treated as production calibration.

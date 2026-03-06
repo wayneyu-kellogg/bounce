@@ -31,6 +31,16 @@ export type BouncerDecision = {
   response?: string
   researchQuery?: string
   recommendedVideoUrl?: string
+  reasonCode?: string
+  confidence?: number
+  policyDecision?: 'allow' | 'deny' | 'review'
+  orchestrationMode?: string
+  evidenceCount?: number
+  verifier?: {
+    passed: boolean
+    warnings: string[]
+    mode: string
+  }
 }
 
 export type BouncerActionItem = {

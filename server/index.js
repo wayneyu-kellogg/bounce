@@ -3,6 +3,25 @@ import dotenv from 'dotenv'
 import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  mockCanvasAssignmentsResponse,
+  mockCourses,
+  mockAssignments,
+  mockResources,
+  mockDomainCatalog,
+  mockUserProfile,
+  mockFocusSession,
+  mockInterventions,
+  mockOutcomes,
+  retrieveMockContext,
+  recordMockIntervention,
+  recordMockOutcome,
+} from './mockData.js'
+import { buildInterventionSignals } from './signalExtraction.js'
+import { scoreInterventionPolicy } from './policyScoring.js'
+import { runDecisionOrchestrator } from './orchestrator.js'
+import { runOfflinePolicyEvaluation } from './offlineEval.js'
+import { getFeatureFlags } from './featureFlags.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -11,32 +30,7 @@ dotenv.config({ path: path.join(__dirname, '.env') })
 
 const app = express()
 const port = Number(process.env.PORT ?? 8787)
-
-const mockCanvasAssignmentsResponse = {
-  assignments: [
-    {
-      id: 'canvas-demo-1',
-      title: 'Design Critique Reflection',
-      course: 'MBAI 448',
-      dueAtISO: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      status: 'pending',
-    },
-    {
-      id: 'canvas-demo-2',
-      title: 'Model Evaluation Notebook',
-      course: 'MSAI 437',
-      dueAtISO: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-      status: 'in_progress',
-    },
-    {
-      id: 'canvas-demo-3',
-      title: 'Leadership Habit Experiment',
-      course: 'LEAD 505',
-      dueAtISO: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-      status: 'pending',
-    },
-  ],
-}
+const featureFlags = getFeatureFlags()
 
 const fallbackActions = (assignment, targetDomain) => {
   const assignmentTitle = assignment?.title ?? 'upcoming assignment'
@@ -135,6 +129,13 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'focus-agent-server' })
 })
 
+app.get('/api/feature-flags', (_req, res) => {
+  res.json({
+    ok: true,
+    featureFlags,
+  })
+})
+
 app.get('/api/canvas/demo-assignments', (_req, res) => {
   res.json({
     ok: true,
@@ -142,8 +143,325 @@ app.get('/api/canvas/demo-assignments', (_req, res) => {
   })
 })
 
+app.get('/api/mock/bootstrap', (_req, res) => {
+  const sampleSignalInput = {
+    assignmentId: mockFocusSession.selectedAssignmentIds[0],
+    targetDomain: mockFocusSession.blacklistDomains[0],
+    userMessage: 'Need a tutorial to complete the assignment notebook error analysis section.',
+  }
+
+  const sampleSignals = buildInterventionSignals(sampleSignalInput)
+  const samplePolicyScore = scoreInterventionPolicy({
+    ...sampleSignalInput,
+    signals: sampleSignals,
+  })
+
+  res.json({
+    ok: true,
+    courses: mockCourses,
+    assignments: mockAssignments,
+    resources: mockResources,
+    domainCatalog: mockDomainCatalog,
+    userProfile: mockUserProfile,
+    focusSession: mockFocusSession,
+    interventions: mockInterventions,
+    outcomes: mockOutcomes,
+    sampleSignals,
+    samplePolicyScore,
+  })
+})
+
+app.get('/api/mock/courses', (_req, res) => {
+  res.json({ ok: true, courses: mockCourses })
+})
+
+app.get('/api/mock/assignments', (_req, res) => {
+  res.json({ ok: true, assignments: mockAssignments })
+})
+
+app.get('/api/mock/resources', (_req, res) => {
+  res.json({ ok: true, resources: mockResources })
+})
+
+app.get('/api/mock/domains', (_req, res) => {
+  res.json({ ok: true, domains: mockDomainCatalog })
+})
+
+app.get('/api/mock/profile', (_req, res) => {
+  res.json({ ok: true, userProfile: mockUserProfile, focusSession: mockFocusSession })
+})
+
+app.get('/api/mock/history', (_req, res) => {
+  res.json({ ok: true, interventions: mockInterventions, outcomes: mockOutcomes })
+})
+
+app.get('/api/mock/metrics-summary', (_req, res) => {
+  const totalInterventions = mockInterventions.length
+  const grantedCount = mockInterventions.filter((item) => item.decision === 'granted').length
+  const deniedCount = totalInterventions - grantedCount
+  const outcomeCount = mockOutcomes.length
+  const helpfulCount = mockOutcomes.filter((item) => item.userFeedback === 'helpful').length
+  const notHelpfulCount = mockOutcomes.filter((item) => item.userFeedback === 'not_helpful').length
+
+  res.json({
+    ok: true,
+    totals: {
+      interventions: totalInterventions,
+      outcomes: outcomeCount,
+    },
+    rates: {
+      grantRate: totalInterventions > 0 ? grantedCount / totalInterventions : 0,
+      denyRate: totalInterventions > 0 ? deniedCount / totalInterventions : 0,
+      helpfulRate: outcomeCount > 0 ? helpfulCount / outcomeCount : 0,
+      notHelpfulRate: outcomeCount > 0 ? notHelpfulCount / outcomeCount : 0,
+    },
+  })
+})
+
+app.post('/api/mock/log-intervention', (req, res) => {
+  if (!featureFlags.enableTelemetryCapture) {
+    res.json({
+      ok: true,
+      skipped: true,
+      reason: 'telemetry_capture_disabled',
+    })
+    return
+  }
+
+  const {
+    targetDomain,
+    rationaleText,
+    decision,
+    confidence,
+    reasonCode,
+    assignmentId,
+    assignmentTitle,
+    policyDecision,
+    orchestrationMode,
+  } = req.body ?? {}
+
+  if (!targetDomain || !decision) {
+    res.status(400).json({
+      ok: false,
+      error: 'targetDomain and decision are required',
+    })
+    return
+  }
+
+  const intervention = recordMockIntervention({
+    targetDomain,
+    rationaleText,
+    decision,
+    confidence,
+    reasonCode,
+    assignmentId,
+    assignmentTitle,
+    policyDecision,
+    orchestrationMode,
+  })
+
+  res.json({ ok: true, intervention })
+})
+
+app.post('/api/mock/log-outcome', (req, res) => {
+  if (!featureFlags.enableTelemetryCapture) {
+    res.json({
+      ok: true,
+      skipped: true,
+      reason: 'telemetry_capture_disabled',
+    })
+    return
+  }
+
+  const {
+    interventionId,
+    allowedDurationUsedMin,
+    returnedToTaskWithinMin,
+    actionCompleted,
+    userFeedback,
+    feedbackText,
+  } = req.body ?? {}
+
+  if (!interventionId) {
+    res.status(400).json({ ok: false, error: 'interventionId is required' })
+    return
+  }
+
+  const outcome = recordMockOutcome({
+    interventionId,
+    allowedDurationUsedMin,
+    returnedToTaskWithinMin,
+    actionCompleted,
+    userFeedback,
+    feedbackText,
+  })
+
+  res.json({ ok: true, outcome })
+})
+
+app.get('/api/mock/evaluate-policy', (_req, res) => {
+  if (!featureFlags.enableOfflineEval) {
+    res.status(403).json({
+      ok: false,
+      error: 'offline_eval_disabled',
+    })
+    return
+  }
+
+  const result = runOfflinePolicyEvaluation()
+  res.json(result)
+})
+
+app.post('/api/mock/evaluate-policy', (req, res) => {
+  if (!featureFlags.enableOfflineEval) {
+    res.status(403).json({
+      ok: false,
+      error: 'offline_eval_disabled',
+    })
+    return
+  }
+
+  const { thresholds, reviewPenalty, runGridSearch, includeRows } = req.body ?? {}
+  const result = runOfflinePolicyEvaluation({
+    thresholds,
+    reviewPenalty,
+    runGridSearch: runGridSearch !== false,
+    includeRows: Boolean(includeRows),
+  })
+
+  res.json(result)
+})
+
+app.post('/api/mock/retrieve-context', (req, res) => {
+  const { assignmentId, targetDomain, query, topK } = req.body ?? {}
+
+  if (!assignmentId && !query) {
+    res.status(400).json({
+      ok: false,
+      error: 'Provide at least assignmentId or query to retrieve context',
+    })
+    return
+  }
+
+  const retrieval = retrieveMockContext({
+    assignmentId,
+    targetDomain,
+    query,
+    topK,
+  })
+
+  res.json({
+    ok: true,
+    ...retrieval,
+  })
+})
+
+app.post('/api/mock/extract-signals', (req, res) => {
+  const { assignmentId, assignment, targetDomain, userMessage, nowISO } = req.body ?? {}
+
+  const resolvedAssignmentId = assignmentId ?? assignment?.id ?? mockFocusSession.selectedAssignmentIds[0]
+
+  const signalBundle = buildInterventionSignals({
+    assignmentId: resolvedAssignmentId,
+    targetDomain: targetDomain ?? mockFocusSession.blacklistDomains[0],
+    userMessage: userMessage ?? '',
+    nowISO,
+  })
+
+  res.json({
+    ok: true,
+    ...signalBundle,
+  })
+})
+
+app.post('/api/mock/policy-score', (req, res) => {
+  const { assignmentId, assignment, targetDomain, userMessage, nowISO, signals } = req.body ?? {}
+
+  const resolvedAssignmentId = assignmentId ?? assignment?.id ?? mockFocusSession.selectedAssignmentIds[0]
+
+  const policyScore = scoreInterventionPolicy({
+    assignmentId: resolvedAssignmentId,
+    assignment,
+    targetDomain: targetDomain ?? mockFocusSession.blacklistDomains[0],
+    userMessage: userMessage ?? '',
+    nowISO,
+    signals,
+  })
+
+  res.json({
+    ok: true,
+    ...policyScore,
+  })
+})
+
+app.post('/api/mock/orchestrate-decision', async (req, res) => {
+  if (!featureFlags.enableAiOrchestrator) {
+    res.status(403).json({
+      ok: false,
+      grant_access: false,
+      response: 'ai_orchestrator_disabled',
+    })
+    return
+  }
+
+  const geminiApiKey = process.env.GEMINI_API_KEY
+  const { targetDomain, userMessage, assignment, assignments, persona } = req.body ?? {}
+
+  try {
+    const decision = await runDecisionOrchestrator({
+      geminiApiKey,
+      targetDomain,
+      userMessage,
+      assignment,
+      assignments,
+      personaInstruction: buildPersonaInstruction(persona),
+      enableResponseVerifier: featureFlags.enableResponseVerifier,
+      includeDecisionTraceMetadata: featureFlags.enableDecisionTraceMetadata,
+    })
+
+    res.json({
+      ok: true,
+      ...decision,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown server error'
+    res.status(500).json({
+      ok: false,
+      grant_access: false,
+      response: `Focus Agent orchestration error: ${message}`,
+    })
+  }
+})
+
 app.post('/api/bouncer-decision', async (req, res) => {
   const geminiApiKey = process.env.GEMINI_API_KEY
+
+  const { targetDomain, userMessage, assignment, assignments, persona } = req.body ?? {}
+
+  if (featureFlags.enableAiOrchestrator) {
+    try {
+      const decision = await runDecisionOrchestrator({
+        geminiApiKey,
+        targetDomain,
+        userMessage,
+        assignment,
+        assignments,
+        personaInstruction: buildPersonaInstruction(persona),
+        enableResponseVerifier: featureFlags.enableResponseVerifier,
+        includeDecisionTraceMetadata: featureFlags.enableDecisionTraceMetadata,
+      })
+
+      res.json(decision)
+      return
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown server error'
+      res.status(500).json({
+        grant_access: false,
+        response: `Focus Agent server error: ${message}`,
+      })
+      return
+    }
+  }
 
   if (!geminiApiKey) {
     res.status(500).json({
@@ -152,8 +470,6 @@ app.post('/api/bouncer-decision', async (req, res) => {
     })
     return
   }
-
-  const { targetDomain, userMessage, assignment, assignments, persona } = req.body ?? {}
 
   const assignmentTitle = assignment?.title ?? 'an assignment'
   const assignmentDue = assignment?.dueAtISO ?? 'soon'

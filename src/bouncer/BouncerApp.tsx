@@ -71,6 +71,16 @@ export function BouncerApp() {
   const [activeAssignment, setActiveAssignment] = useState<Assignment | null>(null)
   const [error, setError] = useState('')
   const [activePersonaLabel, setActivePersonaLabel] = useState('Strict Coach')
+  const [decisionTrace, setDecisionTrace] = useState<{
+    confidence?: number
+    reasonCode?: string
+    policyDecision?: string
+    orchestrationMode?: string
+    evidenceCount?: number
+    verifierWarnings?: string[]
+  } | null>(null)
+  const [lastInterventionId, setLastInterventionId] = useState('')
+  const [feedbackStatus, setFeedbackStatus] = useState('')
 
 const getPersonaLabel = (persona: AgentPersona) => {
   if (persona.mode === 'custom') {
@@ -253,6 +263,46 @@ const getPersonaLabel = (persona: AgentPersona) => {
 
       const decision = (await response.json()) as BouncerDecision
 
+      setDecisionTrace({
+        confidence: decision.confidence,
+        reasonCode: decision.reasonCode,
+        policyDecision: decision.policyDecision,
+        orchestrationMode: decision.orchestrationMode,
+        evidenceCount: decision.evidenceCount,
+        verifierWarnings: decision.verifier?.warnings,
+      })
+      setFeedbackStatus('')
+
+      try {
+        const interventionResponse = await fetch(`${API_BASE}/api/mock/log-intervention`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetDomain,
+            rationaleText: text,
+            decision: decision.grant_access ? 'granted' : 'denied',
+            confidence: decision.confidence,
+            reasonCode: decision.reasonCode,
+            assignmentId: primaryAssignment?.id,
+            assignmentTitle: primaryAssignment?.title,
+            policyDecision: decision.policyDecision,
+            orchestrationMode: decision.orchestrationMode,
+          }),
+        })
+
+        if (interventionResponse.ok) {
+          const payload = (await interventionResponse.json()) as {
+            ok: boolean
+            intervention?: { id?: string }
+          }
+          setLastInterventionId(payload.intervention?.id ?? '')
+        } else {
+          setLastInterventionId('')
+        }
+      } catch {
+        setLastInterventionId('')
+      }
+
       if (decision.grant_access) {
         await chrome.runtime.sendMessage({
           type: 'REQUEST_TEMP_ACCESS',
@@ -272,7 +322,11 @@ const getPersonaLabel = (persona: AgentPersona) => {
           },
         ])
         await wait(900)
-        window.location.href = targetUrl
+        try {
+          await chrome.tabs.create({ url: targetUrl })
+        } catch {
+          window.location.href = targetUrl
+        }
         return
       }
 
@@ -290,6 +344,33 @@ const getPersonaLabel = (persona: AgentPersona) => {
       setError(reason)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const submitFeedback = async (feedback: 'helpful' | 'not_helpful') => {
+    if (!lastInterventionId || loading) {
+      return
+    }
+
+    try {
+      setFeedbackStatus('Saving feedback...')
+      const response = await fetch(`${API_BASE}/api/mock/log-outcome`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          interventionId: lastInterventionId,
+          userFeedback: feedback,
+          actionCompleted: selectedActionId.length > 0,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to save feedback')
+      }
+
+      setFeedbackStatus(feedback === 'helpful' ? 'Marked as helpful.' : 'Marked as not helpful.')
+    } catch {
+      setFeedbackStatus('Could not save feedback.')
     }
   }
 
@@ -384,6 +465,61 @@ const getPersonaLabel = (persona: AgentPersona) => {
               </div>
             ))}
           </div>
+
+          {decisionTrace ? (
+            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Decision trace</p>
+              <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-700">
+                <p>
+                  <span className="font-medium">Confidence:</span>{' '}
+                  {typeof decisionTrace.confidence === 'number'
+                    ? `${Math.round(decisionTrace.confidence * 100)}%`
+                    : 'n/a'}
+                </p>
+                <p>
+                  <span className="font-medium">Policy:</span> {decisionTrace.policyDecision ?? 'n/a'}
+                </p>
+                <p>
+                  <span className="font-medium">Reason code:</span> {decisionTrace.reasonCode ?? 'n/a'}
+                </p>
+                <p>
+                  <span className="font-medium">Mode:</span> {decisionTrace.orchestrationMode ?? 'legacy'}
+                </p>
+                <p>
+                  <span className="font-medium">Evidence:</span>{' '}
+                  {typeof decisionTrace.evidenceCount === 'number' ? decisionTrace.evidenceCount : 'n/a'}
+                </p>
+                <p>
+                  <span className="font-medium">Verifier warnings:</span>{' '}
+                  {decisionTrace.verifierWarnings && decisionTrace.verifierWarnings.length > 0
+                    ? decisionTrace.verifierWarnings.join(', ')
+                    : 'none'}
+                </p>
+              </div>
+
+              {lastInterventionId ? (
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-[11px] text-slate-500">Was this decision helpful?</span>
+                  <button
+                    type="button"
+                    onClick={() => void submitFeedback('helpful')}
+                    className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700"
+                  >
+                    Helpful
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void submitFeedback('not_helpful')}
+                    className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700"
+                  >
+                    Not helpful
+                  </button>
+                </div>
+              ) : null}
+
+              {feedbackStatus ? <p className="mt-2 text-[11px] text-slate-600">{feedbackStatus}</p> : null}
+            </div>
+          ) : null}
 
           {error ? (
             <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>

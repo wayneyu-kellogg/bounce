@@ -60,7 +60,7 @@ When orchestrator is disabled, the system falls back to the legacy LLM-only deci
 
    cp server/.env.example server/.env
 
-3. Configure server env values:
+3. Configure server env values (Please ensure you have enough usage for any API keys):
 
    GEMINI_API_KEY=your_key_here
    PORT=8787
@@ -149,3 +149,6 @@ When orchestrator is disabled, the system falls back to the legacy LLM-only deci
 - Canvas integration is still demo-only.
 - Telemetry and offline eval are in-memory mock flows (non-persistent).
 - Threshold tuning uses small mock samples and should not be treated as production calibration.
+
+## Questions?
+If you encounter any issues running the demo, please reach out to Wayne Yu on Slack.
